@@ -5,12 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/cli.js",
-    "dev": "tsx src/cli.ts",
-    "check": "tsc -p tsconfig.json --noEmit"
-  },
-  "dependencies": {
-    "zod": "^3.23.8"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "worker": "node --import tsx src/index.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
