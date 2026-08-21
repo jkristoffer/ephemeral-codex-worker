@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { runCommand, type CommandResult } from "./codex.js";
 
 const CLONE_TIMEOUT_MS = 120_000;
+const DIFF_TIMEOUT_MS = 30_000;
 
 export async function cloneRepository(params: {
   repo: string;
@@ -23,6 +24,9 @@ export async function cloneRepository(params: {
     GIT_TRACE2_EVENT: "0",
     GIT_TRACE2_PERF: "0",
   };
+  delete env.CODEX_API_KEY;
+  delete env.OPENAI_API_KEY;
+  delete env.GITHUB_TOKEN;
 
   if (auth) {
     const configIndex = configCount(env.GIT_CONFIG_COUNT);
@@ -37,9 +41,25 @@ export async function cloneRepository(params: {
     {
       env,
       timeoutMs: CLONE_TIMEOUT_MS,
-      redactValues: auth ? [token ?? "", auth.header, auth.encodedToken] : [],
+      redactValues: [
+        ...(auth ? [token ?? "", auth.header, auth.encodedToken] : []),
+        ...(params.env.OPENAI_API_KEY ? [params.env.OPENAI_API_KEY] : []),
+      ],
     },
   );
+}
+
+export async function captureWorkingTreeDiff(params: {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  redactValues?: readonly string[];
+}): Promise<CommandResult> {
+  return runCommand("git", ["diff"], {
+    cwd: params.cwd,
+    env: params.env,
+    timeoutMs: DIFF_TIMEOUT_MS,
+    redactValues: params.redactValues,
+  });
 }
 
 function createAuthConfig(token: string): { header: string; encodedToken: string } | undefined {

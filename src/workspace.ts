@@ -1,8 +1,8 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCodex, redactText, type CommandResult } from "./codex.js";
-import { cloneRepository } from "./git.js";
+import { captureWorkingTreeDiff, cloneRepository } from "./git.js";
 
 export const DEFAULT_REF = "main";
 export const DEFAULT_TIMEOUT_SECONDS = 1_800;
@@ -15,7 +15,7 @@ export type Job = {
   timeoutSeconds: number;
 };
 
-export type ResultStage = "validation" | "clone" | "spawn" | "codex" | "cleanup" | "worker";
+export type ResultStage = "validation" | "clone" | "spawn" | "codex" | "diff" | "cleanup" | "worker";
 
 export type WorkerResult = {
   ok: boolean;
@@ -27,6 +27,7 @@ export type WorkerResult = {
   timedOut: boolean;
   stdout: string;
   stderr: string;
+  diff?: string;
   error?: string;
 };
 
@@ -112,6 +113,7 @@ export async function executeJob(job: Job): Promise<WorkerResult> {
   try {
     root = await mkdtemp(join(tmpdir(), "ephemeral-codex-worker-"));
     const destination = join(root, "repository");
+    const codexHome = join(root, "codex-home");
     const clone = await cloneRepository({
       repo: job.repo,
       ref: job.ref,
@@ -124,15 +126,43 @@ export async function executeJob(job: Job): Promise<WorkerResult> {
     } else if (clone.timedOut || clone.exitCode !== 0) {
       result = commandFailure(job, "clone", clone);
     } else {
+      await mkdir(codexHome, { mode: 0o700 });
       const codex = await runCodex({
         cwd: destination,
+        codexHome,
         goal: job.goal,
         env: { ...process.env },
         timeoutSeconds: job.timeoutSeconds,
       });
-      result = codex.spawnError
-        ? commandFailure(job, "spawn", codex, codex.spawnError)
-        : commandFailure(job, "codex", codex);
+      if (codex.spawnError) {
+        result = commandFailure(job, "spawn", codex, codex.spawnError);
+      } else if (codex.timedOut || codex.exitCode !== 0) {
+        result = commandFailure(job, "codex", codex);
+      } else {
+        const diffEnv = { ...process.env };
+        delete diffEnv.CODEX_API_KEY;
+        delete diffEnv.GITHUB_TOKEN;
+        delete diffEnv.OPENAI_API_KEY;
+        const diff = await captureWorkingTreeDiff({
+          cwd: destination,
+          env: diffEnv,
+          redactValues: [
+            process.env.OPENAI_API_KEY ?? "",
+            process.env.GITHUB_TOKEN ?? "",
+          ],
+        });
+
+        if (diff.spawnError) {
+          result = commandFailure(job, "spawn", diff, diff.spawnError);
+        } else if (diff.timedOut || diff.exitCode !== 0) {
+          result = commandFailure(job, "diff", diff);
+        } else {
+          result = {
+            ...commandFailure(job, "codex", codex),
+            diff: diff.stdout,
+          };
+        }
+      }
     }
   } catch (error) {
     result = {

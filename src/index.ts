@@ -4,22 +4,26 @@ import { executeJob, parseJob, validationFailure, type WorkerResult } from "./wo
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
-  if (args.length !== 1) {
-    writeResult(validationFailure(new Error("Provide exactly one JSON job argument")));
-    return;
-  }
-
-  const rawJob = args[0];
   let job;
 
   try {
-    job = parseJob(rawJob);
+    requireOpenAiApiKey();
+    if (args.length !== 1) {
+      throw new Error("Provide exactly one JSON job argument");
+    }
+    job = parseJob(args[0]);
   } catch (error) {
     writeResult(validationFailure(error));
     return;
   }
 
   writeResult(await executeJob(job));
+}
+
+function requireOpenAiApiKey(): void {
+  if (!process.env.OPENAI_API_KEY?.trim()) {
+    throw new Error("OPENAI_API_KEY is required");
+  }
 }
 
 function writeResult(result: WorkerResult): void {
