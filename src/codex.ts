@@ -114,15 +114,46 @@ export function runCommand(command: string, args: readonly string[], options: Ru
 
 export async function runCodex(params: {
   cwd: string;
+  codexHome: string;
   goal: string;
   env: NodeJS.ProcessEnv;
   timeoutSeconds: number;
 }): Promise<CommandResult> {
-  return runCommand("codex", ["exec", "--approve-for-me", "--ephemeral", "--", params.goal], {
-    cwd: params.cwd,
-    env: params.env,
-    timeoutMs: params.timeoutSeconds * 1_000,
-  });
+  const apiKey = params.env.OPENAI_API_KEY;
+  if (!apiKey?.trim()) throw new Error("OPENAI_API_KEY is required");
+
+  const env: NodeJS.ProcessEnv = {
+    ...params.env,
+    CODEX_API_KEY: apiKey,
+    CODEX_HOME: params.codexHome,
+    CODEX_SQLITE_HOME: params.codexHome,
+  };
+  delete env.CODEX_ACCESS_TOKEN;
+  delete env.GITHUB_TOKEN;
+  delete env.OPENAI_FEDERATION_RULE_ID;
+  delete env.OPENAI_IDENTITY_TOKEN_FILE;
+
+  return runCommand(
+    "codex",
+    [
+      "exec",
+      "--approve-for-me",
+      "--ephemeral",
+      "--ignore-user-config",
+      "-c",
+      'cli_auth_credentials_store="file"',
+      "-c",
+      'forced_login_method="api"',
+      "--",
+      params.goal,
+    ],
+    {
+      cwd: params.cwd,
+      env,
+      timeoutMs: params.timeoutSeconds * 1_000,
+      redactValues: params.env.GITHUB_TOKEN ? [params.env.GITHUB_TOKEN] : [],
+    },
+  );
 }
 
 export function redactText(value: string, values: readonly string[] = sensitiveValues(process.env)): string {
